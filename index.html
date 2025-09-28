@@ -680,6 +680,34 @@
                 gap: 0.75rem;
             }
         }
+
+        /* Animaciones adicionales */
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes slideOutRight {
+            from {
+                opacity: 1;
+                transform: translateX(0);
+            }
+            to {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+        }
     </style>
 </head>
 <body>
@@ -1149,8 +1177,15 @@
                 this.historial = [];
                 this.chart = null;
                 this.distanceChart = null;
+                this.currentSection = 'data-entry';
+                this.settings = {
+                    animationsEnabled: true,
+                    autoSave: true,
+                    notifications: true
+                };
                 this.loadData();
                 this.updateAllDisplays();
+                this.initializeEventListeners();
             }
 
             // Función para calcular posición final en la rueda de 39 casillas
@@ -1247,1048 +1282,1313 @@
             }
 
             // Verificar estado de datos
-            checkDataStatus() {
-                const stored = localStorage.getItem('lightning_storm_data');
-                if (stored) {
-                    try {
-                        const parsed = JSON.parse(stored);
-                        console.log('Estado de datos:', {
-                            en_memoria: this.historial.length,
-                            guardados: parsed.historial ? parsed.historial.length : 0,
-                            fecha_guardado: parsed.fecha_guardado
-                        });
-                        return true;
-                    } catch (e) {
-                        console.error('Datos corruptos en localStorage:', e);
-                        return false;
-                    }
-                }
-                console.log('No hay datos guardados');
-                return false;
-            }
-
-            // Agregar giro
-            addRound(numero = null, esLeaf = false, bonus = false, multiplicador = 1.0, posicionInicial = 1, direccion = 'right') {
-                if (!esLeaf && (numero < 1 || numero > 20 || !numero)) {
-                    this.showAlert('danger', 'El número debe estar entre 1 y 20');
-                    return false;
-                }
-
-                if (posicionInicial < 1 || posicionInicial > 39) {
-                    this.showAlert('danger', 'La posición inicial debe estar entre 1 y 39');
-                    return false;
-                }
-
-                const posicionFinal = this.calculateFinalPosition(posicionInicial, direccion, numero, esLeaf);
-                const distancia = this.calculateDistance(posicionInicial, posicionFinal, direccion);
-
-                const ronda = {
-                    numero: esLeaf ? null : numero,
-                    es_leaf: esLeaf,
-                    bonus: bonus,
-                    multiplicador: multiplicador,
-                    posicion_inicial: posicionInicial,
-                    posicion_final: posicionFinal,
-                    direccion: direccion,
-                    distancia: distancia,
-                    timestamp: new Date().toISOString()
-                };
-
-                this.historial.push(ronda);
-                const saved = this.saveData();
+            verifyData() {
+                const issues = [];
                 
-                if (saved) {
-                    this.updateAllDisplays();
-
-                    if (esLeaf) {
-                        this.showAlert('success', `Giro agregado: Leaf (1:1) - Distancia: ${distancia}`);
-                    } else {
-                        let msg = `Giro agregado: Número ${numero} - Distancia: ${distancia}`;
-                        if (bonus) msg += ' 🎁 Con bonus';
-                        if (multiplicador > 1) msg += ` ⚡ Multiplicador ${multiplicador}x`;
-                        this.showAlert('success', msg);
+                // Verificar estructura de cada entrada
+                this.historial.forEach((entry, index) => {
+                    if (!entry.resultado || !entry.posicionInicial || !entry.direccion) {
+                        issues.push(`Entrada ${index + 1}: Datos incompletos`);
                     }
-
-                    // Limpiar formulario
-                    document.getElementById('number-input').value = '';
-                    document.getElementById('bonus-input').value = 'false';
-                    document.getElementById('multiplier-input').value = '1.0';
-                    document.getElementById('start-position').value = '';
-
-                    return true;
-                } else {
-                    // Revertir si no se pudo guardar
-                    this.historial.pop();
-                    return false;
-                }
-            }
-
-            // Calcular estadísticas mejoradas
-            calculateStats() {
-                if (this.historial.length === 0) {
-                    return {
-                        total_rondas: 0,
-                        conteo_numeros: {},
-                        conteo_leaf: 0,
-                        bonus_por_numero: {},
-                        multiplicadores_por_numero: {},
-                        total_bonus: 0,
-                        racha_actual_sin_bonus: 0,
-                        racha_maxima_sin_bonus: 0,
-                        giros_derecha: 0,
-                        giros_izquierda: 0,
-                        distancias_derecha: [],
-                        distancias_izquierda: [],
-                        patrones_posicion_inicial: {}
-                    };
-                }
-
-                const stats = {
-                    total_rondas: this.historial.length,
-                    conteo_numeros: {},
-                    conteo_leaf: 0,
-                    bonus_por_numero: {},
-                    multiplicadores_por_numero: {},
-                    total_bonus: 0,
-                    racha_actual_sin_bonus: 0,
-                    racha_maxima_sin_bonus: 0,
-                    giros_derecha: 0,
-                    giros_izquierda: 0,
-                    distancias_derecha: [],
-                    distancias_izquierda: [],
-                    patrones_posicion_inicial: {},
-                    bonus_por_direccion: { right: 0, left: 0 },
-                    total_por_direccion: { right: 0, left: 0 }
-                };
-
-                // Inicializar contadores para números 1-20
-                for (let i = 1; i <= 20; i++) {
-                    stats.conteo_numeros[i] = 0;
-                    stats.bonus_por_numero[i] = 0;
-                    stats.multiplicadores_por_numero[i] = [];
-                }
-
-                // Inicializar patrones de posición inicial
-                for (let i = 1; i <= 39; i++) {
-                    stats.patrones_posicion_inicial[i] = 0;
-                }
-
-                let rachaActual = 0;
-                let rachaMaxima = 0;
-
-                // Procesar historial
-                this.historial.forEach((ronda) => {
-                    // Contar posición inicial
-                    stats.patrones_posicion_inicial[ronda.posicion_inicial]++;
-
-                    // Contar por dirección
-                    if (ronda.direccion === 'right') {
-                        stats.giros_derecha++;
-                        stats.distancias_derecha.push(ronda.distancia);
-                        stats.total_por_direccion.right++;
-                    } else {
-                        stats.giros_izquierda++;
-                        stats.distancias_izquierda.push(ronda.distancia);
-                        stats.total_por_direccion.left++;
+                    
+                    if (entry.resultado === 'number' && !entry.numero) {
+                        issues.push(`Entrada ${index + 1}: Falta número`);
                     }
-
-                    if (ronda.es_leaf) {
-                        stats.conteo_leaf++;
-                        rachaActual++;
-                    } else {
-                        const numero = ronda.numero;
-                        stats.conteo_numeros[numero]++;
-
-                        if (ronda.bonus) {
-                            stats.bonus_por_numero[numero]++;
-                            stats.total_bonus++;
-                            stats.bonus_por_direccion[ronda.direccion]++;
-                            rachaActual = 0;
-                        } else {
-                            rachaActual++;
-                        }
-
-                        if (ronda.multiplicador > 1) {
-                            stats.multiplicadores_por_numero[numero].push(ronda.multiplicador);
-                        }
+                    
+                    if (entry.resultado === 'leaf' && !entry.leaf) {
+                        issues.push(`Entrada ${index + 1}: Falta leaf`);
                     }
-
-                    rachaMaxima = Math.max(rachaMaxima, rachaActual);
                 });
-
-                stats.racha_actual_sin_bonus = rachaActual;
-                stats.racha_maxima_sin_bonus = rachaMaxima;
-
-                return stats;
-            }
-
-            // Análisis de patrones de giro
-            analyzeSpinPatterns() {
-                const stats = this.calculateStats();
                 
-                const patterns = {
-                    direcciones: {
-                        derecha: {
-                            total: stats.giros_derecha,
-                            distancia_promedio: stats.distancias_derecha.length > 0 ? 
-                                stats.distancias_derecha.reduce((a, b) => a + b, 0) / stats.distancias_derecha.length : 0,
-                            tasa_bonus: stats.total_por_direccion.right > 0 ? 
-                                (stats.bonus_por_direccion.right / stats.total_por_direccion.right) * 100 : 0,
-                            rangos_frecuentes: this.findFrequentRanges(stats.distancias_derecha)
-                        },
-                        izquierda: {
-                            total: stats.giros_izquierda,
-                            distancia_promedio: stats.distancias_izquierda.length > 0 ? 
-                                stats.distancias_izquierda.reduce((a, b) => a + b, 0) / stats.distancias_izquierda.length : 0,
-                            tasa_bonus: stats.total_por_direccion.left > 0 ? 
-                                (stats.bonus_por_direccion.left / stats.total_por_direccion.left) * 100 : 0,
-                            rangos_frecuentes: this.findFrequentRanges(stats.distancias_izquierda)
-                        }
-                    },
-                    posiciones_iniciales_favoritas: this.findTopPositions(stats.patrones_posicion_inicial),
-                    alternancia: this.analyzeDirectionAlternation()
-                };
-
-                return patterns;
-            }
-
-            // Encontrar rangos de distancia más frecuentes
-            findFrequentRanges(distancias) {
-                if (distancias.length === 0) return [];
-
-                const rangos = {};
-                distancias.forEach(dist => {
-                    const rango = Math.floor(dist / 5) * 5; // Agrupar en rangos de 5
-                    rangos[rango] = (rangos[rango] || 0) + 1;
-                });
-
-                return Object.entries(rangos)
-                    .sort(([,a], [,b]) => b - a)
-                    .slice(0, 3)
-                    .map(([rango, freq]) => ({ rango: parseInt(rango), frecuencia: freq }));
-            }
-
-            // Encontrar posiciones iniciales más comunes
-            findTopPositions(patrones) {
-                return Object.entries(patrones)
-                    .sort(([,a], [,b]) => b - a)
-                    .slice(0, 5)
-                    .map(([pos, freq]) => ({ posicion: parseInt(pos), frecuencia: freq }));
-            }
-
-            // Analizar alternancia de direcciones
-            analyzeDirectionAlternation() {
-                if (this.historial.length < 2) return { patron: 'Insuficientes datos', precision: 0 };
-
-                let alternaciones = 0;
-                let total_comparaciones = 0;
-
-                for (let i = 1; i < this.historial.length; i++) {
-                    if (this.historial[i].direccion !== this.historial[i-1].direccion) {
-                        alternaciones++;
-                    }
-                    total_comparaciones++;
-                }
-
-                const precision = total_comparaciones > 0 ? (alternaciones / total_comparaciones) * 100 : 0;
-                
-                return {
-                    patron: precision > 60 ? 'Alternado' : precision > 40 ? 'Parcialmente alternado' : 'No alternado',
-                    precision: precision.toFixed(1)
-                };
-            }
-
-            // Simulación mejorada con patrones
-            simulate(numSimulaciones = 1000, numRondas = 10, posicionInicial = 1, direccionPreferida = 'both') {
-                const patterns = this.analyzeSpinPatterns();
-                if (this.historial.length === 0) return null;
-
-                const resultados = {
-                    conteo_numeros: {},
-                    conteo_leaf: 0,
-                    total_bonus: 0,
-                    rondas_con_bonus: 0,
-                    multiplicadores_aplicados: 0,
-                    distancias_promedio: [],
-                    predicciones_por_direccion: {
-                        derecha: { numeros: {}, leaf: 0, bonus: 0 },
-                        izquierda: { numeros: {}, leaf: 0, bonus: 0 }
-                    }
-                };
-
-                // Inicializar contadores
-                for (let i = 1; i <= 20; i++) {
-                    resultados.conteo_numeros[i] = 0;
-                    resultados.predicciones_por_direccion.derecha.numeros[i] = 0;
-                    resultados.predicciones_por_direccion.izquierda.numeros[i] = 0;
-                }
-
-                const probs = this.calculateProbabilities();
-                if (!probs) return null;
-
-                for (let sim = 0; sim < numSimulaciones; sim++) {
-                    let bonusEnSimulacion = false;
-                    let posActual = posicionInicial;
-
-                    for (let ronda = 0; ronda < numRondas; ronda++) {
-                        // Determinar dirección basada en patrones
-                        let direccion;
-                        if (direccionPreferida === 'both') {
-                            // Usar patrón de alternancia si existe
-                            if (patterns.alternancia.precision > 60) {
-                                direccion = ronda % 2 === 0 ? 'right' : 'left';
-                            } else {
-                                direccion = Math.random() > 0.5 ? 'right' : 'left';
-                            }
-                        } else {
-                            direccion = direccionPreferida;
-                        }
-
-                        // Simular resultado
-                        if (Math.random() < probs.leaf) {
-                            resultados.conteo_leaf++;
-                            resultados.predicciones_por_direccion[direccion].leaf++;
-                        } else {
-                            // Seleccionar número basado en probabilidades
-                            const rand = Math.random();
-                            let acum = 0;
-                            let numeroSeleccionado = 1;
-
-                            for (let i = 1; i <= 20; i++) {
-                                acum += probs.numeros[i];
-                                if (rand <= acum) {
-                                    numeroSeleccionado = i;
-                                    break;
-                                }
-                            }
-
-                            resultados.conteo_numeros[numeroSeleccionado]++;
-                            resultados.predicciones_por_direccion[direccion].numeros[numeroSeleccionado]++;
-
-                            // Simular bonus con mejores probabilidades por dirección
-                            const bonusProb = direccion === 'right' ? 
-                                patterns.direcciones.derecha.tasa_bonus / 100 : 
-                                patterns.direcciones.izquierda.tasa_bonus / 100;
-
-                            if (Math.random() < bonusProb) {
-                                resultados.total_bonus++;
-                                resultados.predicciones_por_direccion[direccion].bonus++;
-                                bonusEnSimulacion = true;
-                            }
-
-                            // Calcular distancia simulada
-                            const posFinal = this.calculateFinalPosition(posActual, direccion, numeroSeleccionado, false);
-                            const distancia = this.calculateDistance(posActual, posFinal, direccion);
-                            resultados.distancias_promedio.push(distancia);
-                            posActual = posFinal;
-                        }
-                    }
-
-                    if (bonusEnSimulacion) {
-                        resultados.rondas_con_bonus++;
-                    }
-                }
-
-                // Calcular promedios
-                for (let key in resultados) {
-                    if (key !== 'rondas_con_bonus' && key !== 'predicciones_por_direccion' && key !== 'distancias_promedio') {
-                        if (key === 'conteo_numeros') {
-                            for (let i = 1; i <= 20; i++) {
-                                resultados.conteo_numeros[i] /= numSimulaciones;
-                            }
-                        } else {
-                            resultados[key] /= numSimulaciones;
-                        }
-                    }
-                }
-
-                resultados.prob_bonus_en_X_rondas = resultados.rondas_con_bonus / numSimulaciones;
-                resultados.distancia_promedio_simulada = resultados.distancias_promedio.length > 0 ? 
-                    resultados.distancias_promedio.reduce((a, b) => a + b, 0) / resultados.distancias_promedio.length : 0;
-
-                return resultados;
-            }
-
-            // Calcular probabilidades mejoradas
-            calculateProbabilities() {
-                const stats = this.calculateStats();
-                
-                if (stats.total_rondas === 0) return null;
-
-                const totalNumeros = Object.values(stats.conteo_numeros).reduce((a, b) => a + b, 0);
-                
-                const probabilities = {
-                    numeros: {},
-                    leaf: stats.conteo_leaf / stats.total_rondas,
-                    bonus_general: stats.total_bonus / stats.total_rondas,
-                    bonus_por_numero: {},
-                    multiplicadores_promedio: {},
-                    bonus_por_direccion: {
-                        right: stats.total_por_direccion.right > 0 ? stats.bonus_por_direccion.right / stats.total_por_direccion.right : 0,
-                        left: stats.total_por_direccion.left > 0 ? stats.bonus_por_direccion.left / stats.total_por_direccion.left : 0
-                    }
-                };
-
-                // Calcular probabilidades para números
-                for (let i = 1; i <= 20; i++) {
-                    probabilities.numeros[i] = totalNumeros > 0 ? stats.conteo_numeros[i] / totalNumeros : 1/20;
-                    
-                    // Probabilidad de bonus por número
-                    const apariciones = stats.conteo_numeros[i];
-                    probabilities.bonus_por_numero[i] = apariciones > 0 ? 
-                        stats.bonus_por_numero[i] / apariciones : 
-                        probabilities.bonus_general;
-                    
-                    // Multiplicador promedio
-                    const mults = stats.multiplicadores_por_numero[i];
-                    probabilities.multiplicadores_promedio[i] = mults.length > 0 ? 
-                        mults.reduce((a, b) => a + b, 0) / mults.length : 1.0;
-                }
-
-                return probabilities;
-            }
-
-            // Sugerir mejores números con análisis de patrones
-            suggestBestNumbers(topN = 5) {
-                const probs = this.calculateProbabilities();
-                const patterns = this.analyzeSpinPatterns();
-                
-                if (!probs) return [];
-
-                const valores = [];
-
-                for (let i = 1; i <= 20; i++) {
-                    const probSalir = probs.numeros[i];
-                    const probBonus = probs.bonus_por_numero[i];
-                    const multPromedio = probs.multiplicadores_promedio[i];
-
-                    // Valor esperado mejorado con análisis de patrones
-                    const valorBase = probSalir * 20;
-                    const bonusExtra = probBonus * 15;
-                    const multExtra = (multPromedio - 1) * 8;
-                    
-                    // Factor de patrón direccional
-                    const factorDireccion = Math.max(
-                        patterns.direcciones.derecha.tasa_bonus,
-                        patterns.direcciones.izquierda.tasa_bonus
-                    ) / 100;
-
-                    const valorTotal = (valorBase + bonusExtra + multExtra) * (1 + factorDireccion);
-                    
-                    valores.push({ 
-                        numero: i, 
-                        valor: valorTotal, 
-                        prob: probSalir, 
-                        probBonus: probBonus, 
-                        mult: multPromedio,
-                        factorPatron: factorDireccion
-                    });
-                }
-
-                return valores.sort((a, b) => b.valor - a.valor).slice(0, topN);
-            }
-
-            // Alertas de interfaz
-            showAlert(type, message) {
-                const alertDiv = document.createElement('div');
-                alertDiv.className = `alert alert-${type}`;
-                alertDiv.innerHTML = `
-                    <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'danger' ? 'exclamation-triangle' : 'info-circle'}"></i>
-                    ${message}
-                `;
-
-                const resultDiv = document.getElementById('add-result');
-                resultDiv.innerHTML = '';
-                resultDiv.appendChild(alertDiv);
-
-                setTimeout(() => {
-                    alertDiv.style.opacity = '0';
-                    setTimeout(() => alertDiv.remove(), 300);
-                }, 4000);
+                return issues;
             }
 
             // Actualizar todas las visualizaciones
             updateAllDisplays() {
                 this.updateHeaderStats();
                 this.updateAnalytics();
-                this.updateNumbersGrid();
-                this.updateRecommendations();
-                this.updatePatternAnalysis();
+                this.updatePatterns();
                 this.updateHistory();
+                this.updateNumbersGrid();
+                this.updateStartPositionsGrid();
+                this.updateRecommendations();
             }
 
+            // Actualizar estadísticas del header
             updateHeaderStats() {
-                const stats = this.calculateStats();
+                const totalRounds = this.historial.length;
+                const bonusCount = this.historial.filter(r => r.bonus === true).length;
+                const bonusRate = totalRounds > 0 ? Math.round((bonusCount / totalRounds) * 100) : 0;
                 
-                document.getElementById('header-total-rounds').textContent = stats.total_rondas;
-                
-                const bonusRate = stats.total_rondas > 0 ? 
-                    ((stats.total_bonus / stats.total_rondas) * 100).toFixed(1) : '0';
-                document.getElementById('header-success-rate').textContent = bonusRate + '%';
+                document.getElementById('header-total-rounds').textContent = totalRounds;
+                document.getElementById('header-success-rate').textContent = `${bonusRate}%`;
             }
 
+            // Actualizar panel de análisis
             updateAnalytics() {
-                const stats = this.calculateStats();
+                const totalRounds = this.historial.length;
+                const bonusCount = this.historial.filter(r => r.bonus === true).length;
+                const leafCount = this.historial.filter(r => r.resultado === 'leaf').length;
+                const bonusRate = totalRounds > 0 ? Math.round((bonusCount / totalRounds) * 100) : 0;
+                const leafRate = totalRounds > 0 ? Math.round((leafCount / totalRounds) * 100) : 0;
                 
-                document.getElementById('total-rounds').textContent = stats.total_rondas;
-                document.getElementById('current-streak').textContent = stats.racha_actual_sin_bonus;
+                // Calcular racha actual
+                let currentStreak = 0;
+                for (let i = this.historial.length - 1; i >= 0; i--) {
+                    if (this.historial[i].bonus === false) {
+                        currentStreak++;
+                    } else {
+                        break;
+                    }
+                }
                 
-                const bonusRate = stats.total_rondas > 0 ? 
-                    ((stats.total_bonus / stats.total_rondas) * 100).toFixed(1) : '0';
-                document.getElementById('bonus-rate').textContent = bonusRate + '%';
-                
-                const leafRate = stats.total_rondas > 0 ? 
-                    ((stats.conteo_leaf / stats.total_rondas) * 100).toFixed(1) : '0';
-                document.getElementById('leaf-rate').textContent = leafRate + '%';
+                document.getElementById('total-rounds').textContent = totalRounds;
+                document.getElementById('bonus-rate').textContent = `${bonusRate}%`;
+                document.getElementById('current-streak').textContent = currentStreak;
+                document.getElementById('leaf-rate').textContent = `${leafRate}%`;
             }
 
+            // Actualizar análisis de patrones
+            updatePatterns() {
+                const rightSpins = this.historial.filter(r => r.direccion === 'right');
+                const leftSpins = this.historial.filter(r => r.direccion === 'left');
+                
+                // Giros a la derecha
+                const rightBonusCount = rightSpins.filter(r => r.bonus === true).length;
+                const rightLeafCount = rightSpins.filter(r => r.resultado === 'leaf').length;
+                const rightAvgDistance = rightSpins.length > 0 
+                    ? Math.round(rightSpins.reduce((sum, r) => sum + r.distancia, 0) / rightSpins.length)
+                    : 0;
+                const rightBonusRate = rightSpins.length > 0 
+                    ? Math.round((rightBonusCount / rightSpins.length) * 100) 
+                    : 0;
+                const rightLeafRate = rightSpins.length > 0 
+                    ? Math.round((rightLeafCount / rightSpins.length) * 100) 
+                    : 0;
+                
+                document.getElementById('right-spins-count').textContent = rightSpins.length;
+                document.getElementById('right-avg-distance').textContent = rightAvgDistance;
+                document.getElementById('right-bonus-rate').textContent = `${rightBonusRate}%`;
+                document.getElementById('right-leaf-rate').textContent = `${rightLeafRate}%`;
+                
+                // Giros a la izquierda
+                const leftBonusCount = leftSpins.filter(r => r.bonus === true).length;
+                const leftLeafCount = leftSpins.filter(r => r.resultado === 'leaf').length;
+                const leftAvgDistance = leftSpins.length > 0 
+                    ? Math.round(leftSpins.reduce((sum, r) => sum + r.distancia, 0) / leftSpins.length)
+                    : 0;
+                const leftBonusRate = leftSpins.length > 0 
+                    ? Math.round((leftBonusCount / leftSpins.length) * 100) 
+                    : 0;
+                const leftLeafRate = leftSpins.length > 0 
+                    ? Math.round((leftLeafCount / leftSpins.length) * 100) 
+                    : 0;
+                
+                document.getElementById('left-spins-count').textContent = leftSpins.length;
+                document.getElementById('left-avg-distance').textContent = leftAvgDistance;
+                document.getElementById('left-bonus-rate').textContent = `${leftBonusRate}%`;
+                document.getElementById('left-leaf-rate').textContent = `${leftLeafRate}%`;
+                
+                // Actualizar análisis de rangos
+                this.updateRangeAnalysis();
+                
+                // Actualizar gráfico de distancias
+                this.updateDistanceChart();
+            }
+
+            // Actualizar análisis de rangos
+            updateRangeAnalysis() {
+                const rangeList = document.getElementById('range-analysis-list');
+                rangeList.innerHTML = '';
+                
+                // Analizar rangos de distancia
+                const ranges = [
+                    { min: 0, max: 10, label: 'Corta (0-10)' },
+                    { min: 11, max: 20, label: 'Media (11-20)' },
+                    { min: 21, max: 30, label: 'Larga (21-30)' },
+                    { min: 31, max: 39, label: 'Muy Larga (31-39)' }
+                ];
+                
+                ranges.forEach(range => {
+                    const spinsInRange = this.historial.filter(r => r.distancia >= range.min && r.distancia <= range.max);
+                    const bonusInRange = spinsInRange.filter(r => r.bonus === true).length;
+                    const bonusRate = spinsInRange.length > 0 
+                        ? Math.round((bonusInRange / spinsInRange.length) * 100) 
+                        : 0;
+                    
+                    const rangeItem = document.createElement('div');
+                    rangeItem.className = 'range-item';
+                    rangeItem.innerHTML = `
+                        <span>${range.label}</span>
+                        <span>${spinsInRange.length} giros (${bonusRate}% bonus)</span>
+                    `;
+                    rangeList.appendChild(rangeItem);
+                });
+            }
+
+            // Actualizar gráfico de distancias
+            updateDistanceChart() {
+                const ctx = document.getElementById('distanceChart').getContext('2d');
+                
+                if (this.distanceChart) {
+                    this.distanceChart.destroy();
+                }
+                
+                // Preparar datos
+                const rightDistances = this.historial
+                    .filter(r => r.direccion === 'right')
+                    .map(r => r.distancia);
+                
+                const leftDistances = this.historial
+                    .filter(r => r.direccion === 'left')
+                    .map(r => r.distancia);
+                
+                // Crear histogramas
+                const rightHistogram = this.createHistogram(rightDistances, 10);
+                const leftHistogram = this.createHistogram(leftDistances, 10);
+                
+                this.distanceChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: Array.from({length: 10}, (_, i) => `${i*4}-${(i+1)*4-1}`),
+                        datasets: [
+                            {
+                                label: 'Derecha',
+                                data: rightHistogram,
+                                backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                                borderColor: 'rgba(59, 130, 246, 1)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'Izquierda',
+                                data: leftHistogram,
+                                backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                                borderColor: 'rgba(239, 68, 68, 1)',
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                labels: {
+                                    color: '#cbd5e1'
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    color: '#cbd5e1'
+                                },
+                                grid: {
+                                    color: 'rgba(148, 163, 184, 0.1)'
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    color: '#cbd5e1'
+                                },
+                                grid: {
+                                    color: 'rgba(148, 163, 184, 0.1)'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Crear histograma para distribución
+            createHistogram(data, bins) {
+                const histogram = new Array(bins).fill(0);
+                const max = Math.max(...data, 39);
+                const binSize = max / bins;
+                
+                data.forEach(value => {
+                    const binIndex = Math.min(Math.floor(value / binSize), bins - 1);
+                    histogram[binIndex]++;
+                });
+                
+                return histogram;
+            }
+
+            // Actualizar grilla de números
             updateNumbersGrid() {
-                const stats = this.calculateStats();
                 const grid = document.getElementById('numbers-grid');
                 grid.innerHTML = '';
-
-                if (stats.total_rondas === 0) {
-                    grid.innerHTML = '<p>No hay datos disponibles aún. Agrega algunos giros para ver el análisis de números.</p>';
-                    return;
-                }
-
-                const totalNumeros = Object.values(stats.conteo_numeros).reduce((a, b) => a + b, 0);
-                const avgFrequency = totalNumeros / 20;
-
+                
+                // Analizar cada número
                 for (let i = 1; i <= 20; i++) {
-                    const count = stats.conteo_numeros[i];
-                    const bonusCount = stats.bonus_por_numero[i];
-                    const multCount = stats.multiplicadores_por_numero[i].length;
+                    const numberData = this.historial.filter(r => r.resultado === 'number' && r.numero === i);
+                    const total = numberData.length;
+                    const bonusCount = numberData.filter(r => r.bonus === true).length;
+                    const bonusRate = total > 0 ? Math.round((bonusCount / total) * 100) : 0;
                     
-                    const card = document.createElement('div');
-                    card.className = 'number-card';
-                    
-                    if (count > avgFrequency * 1.2) {
-                        card.classList.add('hot');
-                    } else if (count < avgFrequency * 0.8) {
-                        card.classList.add('cold');
+                    // Determinar si es "caliente" o "frío"
+                    let cardClass = 'number-card';
+                    if (total > 0) {
+                        if (bonusRate > 30) {
+                            cardClass += ' hot';
+                        } else if (bonusRate < 10) {
+                            cardClass += ' cold';
+                        }
                     }
                     
+                    const card = document.createElement('div');
+                    card.className = cardClass;
                     card.innerHTML = `
                         <div class="number-value">${i}</div>
                         <div class="number-stats">
-                            <div>Apariciones: ${count}</div>
-                            <div>Bonus: ${bonusCount}</div>
-                            <div>Mult: ${multCount}</div>
+                            <span>Apariciones: ${total}</span>
+                            <span>Bonus: ${bonusRate}%</span>
                         </div>
                     `;
-                    
                     grid.appendChild(card);
                 }
             }
 
-            updateRecommendations() {
-                const recommendations = this.suggestBestNumbers(5);
-                const container = document.getElementById('recommendations-list');
-                container.innerHTML = '';
-
-                if (recommendations.length === 0) {
-                    container.innerHTML = '<p>Agrega más giros para generar recomendaciones.</p>';
-                    return;
-                }
-
-                recommendations.forEach((rec, index) => {
-                    const item = document.createElement('div');
-                    item.className = 'range-item';
-                    item.innerHTML = `
-                        <div style="font-weight: 700; font-size: 1.125rem;">
-                            ${index + 1}. Número ${rec.numero}
-                        </div>
-                        <div style="display: flex; gap: 1.5rem; font-size: 0.875rem; color: var(--text-secondary);">
-                            <div>Valor: ${rec.valor.toFixed(2)}</div>
-                            <div>Prob: ${(rec.prob * 100).toFixed(1)}%</div>
-                            <div>Bonus: ${(rec.probBonus * 100).toFixed(1)}%</div>
-                            <div>Mult: ${rec.mult.toFixed(1)}x</div>
-                            <div>Patrón: +${(rec.factorPatron * 100).toFixed(0)}%</div>
-                        </div>
-                    `;
-                    container.appendChild(item);
-                });
-            }
-
-            updatePatternAnalysis() {
-                const patterns = this.analyzeSpinPatterns();
-                const stats = this.calculateStats();
-
-                // Actualizar estadísticas de giros a la derecha
-                document.getElementById('right-spins-count').textContent = patterns.direcciones.derecha.total;
-                document.getElementById('right-avg-distance').textContent = patterns.direcciones.derecha.distancia_promedio.toFixed(1);
-                document.getElementById('right-bonus-rate').textContent = patterns.direcciones.derecha.tasa_bonus.toFixed(1) + '%';
-                
-                const rightLeafRate = stats.giros_derecha > 0 ? 
-                    ((stats.distancias_derecha.filter(d => d % 2 === 0).length / stats.giros_derecha) * 100).toFixed(1) : '0';
-                document.getElementById('right-leaf-rate').textContent = rightLeafRate + '%';
-
-                // Actualizar estadísticas de giros a la izquierda
-                document.getElementById('left-spins-count').textContent = patterns.direcciones.izquierda.total;
-                document.getElementById('left-avg-distance').textContent = patterns.direcciones.izquierda.distancia_promedio.toFixed(1);
-                document.getElementById('left-bonus-rate').textContent = patterns.direcciones.izquierda.tasa_bonus.toFixed(1) + '%';
-                
-                const leftLeafRate = stats.giros_izquierda > 0 ? 
-                    ((stats.distancias_izquierda.filter(d => d % 2 === 0).length / stats.giros_izquierda) * 100).toFixed(1) : '0';
-                document.getElementById('left-leaf-rate').textContent = leftLeafRate + '%';
-
-                // Actualizar análisis de rangos
-                this.updateRangeAnalysis(patterns);
-
-                // Actualizar grid de posiciones iniciales
-                this.updateStartPositionsGrid(stats);
-            }
-
-            updateRangeAnalysis(patterns) {
-                const container = document.getElementById('range-analysis-list');
-                container.innerHTML = '';
-
-                // Rangos frecuentes derecha
-                if (patterns.direcciones.derecha.rangos_frecuentes.length > 0) {
-                    const rightRanges = document.createElement('div');
-                    rightRanges.innerHTML = '<h4 style="margin-bottom: 1rem; color: var(--accent-gold);">Rangos Frecuentes - Giros a la Derecha:</h4>';
-                    
-                    patterns.direcciones.derecha.rangos_frecuentes.forEach(rango => {
-                        const item = document.createElement('div');
-                        item.className = 'range-item';
-                        item.innerHTML = `
-                            <div>Rango ${rango.rango}-${rango.rango + 4} posiciones</div>
-                            <div>Frecuencia: ${rango.frecuencia} veces</div>
-                        `;
-                        rightRanges.appendChild(item);
-                    });
-                    
-                    container.appendChild(rightRanges);
-                }
-
-                // Rangos frecuentes izquierda
-                if (patterns.direcciones.izquierda.rangos_frecuentes.length > 0) {
-                    const leftRanges = document.createElement('div');
-                    leftRanges.innerHTML = '<h4 style="margin: 2rem 0 1rem; color: var(--accent-gold);">Rangos Frecuentes - Giros a la Izquierda:</h4>';
-                    
-                    patterns.direcciones.izquierda.rangos_frecuentes.forEach(rango => {
-                        const item = document.createElement('div');
-                        item.className = 'range-item';
-                        item.innerHTML = `
-                            <div>Rango ${rango.rango}-${rango.rango + 4} posiciones</div>
-                            <div>Frecuencia: ${rango.frecuencia} veces</div>
-                        `;
-                        leftRanges.appendChild(item);
-                    });
-                    
-                    container.appendChild(leftRanges);
-                }
-
-                // Patrón de alternancia
-                const alternancia = document.createElement('div');
-                alternancia.className = 'range-item';
-                alternancia.innerHTML = `
-                    <div><strong>Patrón de Alternancia:</strong> ${patterns.alternancia.patron}</div>
-                    <div>Precisión: ${patterns.alternancia.precision}%</div>
-                `;
-                container.appendChild(alternancia);
-            }
-
-            updateStartPositionsGrid(stats) {
+            // Actualizar grilla de posiciones iniciales
+            updateStartPositionsGrid() {
                 const grid = document.getElementById('start-positions-grid');
                 grid.innerHTML = '';
-
-                if (stats.total_rondas === 0) {
-                    grid.innerHTML = '<p>No hay datos de posiciones iniciales disponibles.</p>';
-                    return;
-                }
-
-                const topPositions = Object.entries(stats.patrones_posicion_inicial)
-                    .filter(([pos, freq]) => freq > 0)
-                    .sort(([,a], [,b]) => b - a)
-                    .slice(0, 20);
-
-                topPositions.forEach(([pos, freq]) => {
-                    const card = document.createElement('div');
-                    card.className = 'number-card';
+                
+                // Analizar cada posición inicial
+                for (let i = 1; i <= 39; i++) {
+                    const positionData = this.historial.filter(r => r.posicionInicial === i);
+                    const total = positionData.length;
+                    const bonusCount = positionData.filter(r => r.bonus === true).length;
+                    const bonusRate = total > 0 ? Math.round((bonusCount / total) * 100) : 0;
                     
-                    const percentage = ((freq / stats.total_rondas) * 100).toFixed(1);
-                    
-                    if (percentage > 5) {
-                        card.classList.add('hot');
-                    } else if (percentage < 2) {
-                        card.classList.add('cold');
+                    // Determinar si es "caliente" o "frío"
+                    let cardClass = 'number-card';
+                    if (total > 0) {
+                        if (bonusRate > 30) {
+                            cardClass += ' hot';
+                        } else if (bonusRate < 10) {
+                            cardClass += ' cold';
+                        }
                     }
                     
+                    const card = document.createElement('div');
+                    card.className = cardClass;
                     card.innerHTML = `
-                        <div class="number-value">${pos}</div>
+                        <div class="number-value">${i}</div>
                         <div class="number-stats">
-                            <div>Veces: ${freq}</div>
-                            <div>%: ${percentage}%</div>
+                            <span>Usos: ${total}</span>
+                            <span>Bonus: ${bonusRate}%</span>
                         </div>
                     `;
-                    
                     grid.appendChild(card);
+                }
+            }
+
+            // Actualizar recomendaciones
+            updateRecommendations() {
+                const list = document.getElementById('recommendations-list');
+                list.innerHTML = '';
+                
+                if (this.historial.length === 0) {
+                    list.innerHTML = '<p>No hay suficientes datos para generar recomendaciones</p>';
+                    return;
+                }
+                
+                // Analizar patrones para generar recomendaciones
+                const recommendations = [];
+                
+                // Recomendación basada en dirección
+                const rightSpins = this.historial.filter(r => r.direccion === 'right');
+                const leftSpins = this.historial.filter(r => r.direccion === 'left');
+                
+                if (rightSpins.length > leftSpins.length) {
+                    recommendations.push({
+                        type: 'success',
+                        text: 'Los giros a la derecha han sido más frecuentes. Considera esta dirección.'
+                    });
+                } else if (leftSpins.length > rightSpins.length) {
+                    recommendations.push({
+                        type: 'success',
+                        text: 'Los giros a la izquierda han sido más frecuentes. Considera esta dirección.'
+                    });
+                }
+                
+                // Recomendación basada en racha
+                let currentStreak = 0;
+                for (let i = this.historial.length - 1; i >= 0; i--) {
+                    if (this.historial[i].bonus === false) {
+                        currentStreak++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                if (currentStreak > 10) {
+                    recommendations.push({
+                        type: 'warning',
+                        text: `Llevas ${currentStreak} giros sin bonus. Podrías estar cerca de uno.`
+                    });
+                }
+                
+                // Recomendación basada en números
+                const numberStats = {};
+                for (let i = 1; i <= 20; i++) {
+                    const numberData = this.historial.filter(r => r.resultado === 'number' && r.numero === i);
+                    const total = numberData.length;
+                    const bonusCount = numberData.filter(r => r.bonus === true).length;
+                    const bonusRate = total > 0 ? (bonusCount / total) : 0;
+                    numberStats[i] = { total, bonusRate };
+                }
+                
+                // Encontrar número con mejor tasa de bonus
+                let bestNumber = null;
+                let bestRate = 0;
+                
+                for (const [num, stats] of Object.entries(numberStats)) {
+                    if (stats.total >= 3 && stats.bonusRate > bestRate) {
+                        bestNumber = num;
+                        bestRate = stats.bonusRate;
+                    }
+                }
+                
+                if (bestNumber) {
+                    recommendations.push({
+                        type: 'success',
+                        text: `El número ${bestNumber} tiene la mejor tasa de bonus (${Math.round(bestRate * 100)}%).`
+                    });
+                }
+                
+                // Mostrar recomendaciones
+                if (recommendations.length === 0) {
+                    recommendations.push({
+                        type: 'warning',
+                        text: 'Continúa recolectando datos para obtener recomendaciones más precisas.'
+                    });
+                }
+                
+                recommendations.forEach(rec => {
+                    const item = document.createElement('div');
+                    item.className = `alert alert-${rec.type}`;
+                    item.innerHTML = `
+                        <i class="fas fa-${rec.type === 'success' ? 'check-circle' : 'exclamation-triangle'}"></i>
+                        <span>${rec.text}</span>
+                    `;
+                    list.appendChild(item);
                 });
             }
 
+            // Actualizar historial
             updateHistory() {
                 const tbody = document.getElementById('history-tbody');
                 tbody.innerHTML = '';
-
-                if (this.historial.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8">No hay giros registrados aún.</td></tr>';
-                    return;
-                }
-
-                const recent = this.historial.slice(-50).reverse();
                 
-                recent.forEach((ronda, index) => {
+                // Mostrar últimos 50 giros
+                const recentHistory = this.historial.slice(-50).reverse();
+                
+                recentHistory.forEach((round, index) => {
                     const row = document.createElement('tr');
-                    const resultText = ronda.es_leaf ? 'Leaf (1:1)' : `Número ${ronda.numero}`;
-                    const direccionText = ronda.direccion === 'right' ? '→ Derecha' : '← Izquierda';
-                    const bonusText = ronda.bonus ? '✅' : '❌';
-                    const multText = ronda.multiplicador > 1 ? `${ronda.multiplicador}x` : '1x';
-                    const date = new Date(ronda.timestamp).toLocaleString();
+                    const resultText = round.resultado === 'number' 
+                        ? `Número ${round.numero}` 
+                        : 'Leaf';
+                    const directionText = round.direccion === 'right' 
+                        ? 'Derecha' 
+                        : 'Izquierda';
+                    const bonusText = round.bonus 
+                        ? '<span style="color: var(--success-green);">Sí</span>' 
+                        : '<span style="color: var(--danger-red);">No</span>';
                     
                     row.innerHTML = `
                         <td>${this.historial.length - index}</td>
                         <td>${resultText}</td>
-                        <td>${ronda.posicion_inicial}</td>
-                        <td>${direccionText}</td>
-                        <td>${ronda.distancia}</td>
+                        <td>${round.posicionInicial}</td>
+                        <td>${directionText}</td>
+                        <td>${round.distancia}</td>
                         <td>${bonusText}</td>
-                        <td>${multText}</td>
-                        <td>${date}</td>
+                        <td>${round.multiplicador}x</td>
+                        <td>${new Date(round.fecha).toLocaleString()}</td>
                     `;
-                    
                     tbody.appendChild(row);
                 });
+                
+                if (recentHistory.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center;">No hay datos disponibles</td></tr>';
+                }
             }
-        }
 
-        // Instancia global
-        let analyzer = new LightningStormAnalyzer();
-
-        // Funciones globales
-        function showSection(sectionId) {
-            // Actualizar navegación
-            document.querySelectorAll('.nav-item').forEach(item => {
-                item.classList.remove('active');
-            });
-            event.target.classList.add('active');
-            
-            // Actualizar contenido
-            document.querySelectorAll('.section').forEach(section => {
-                section.classList.remove('active');
-            });
-            document.getElementById(sectionId).classList.add('active');
-        }
-
-        function toggleResultFields() {
-            const type = document.getElementById('result-type').value;
-            const numberGroup = document.getElementById('number-group');
-            const bonusGroup = document.getElementById('bonus-group');
-            const multiplierGroup = document.getElementById('multiplier-group');
-            
-            if (type === 'leaf') {
-                numberGroup.style.display = 'none';
-                bonusGroup.style.display = 'none';
-                multiplierGroup.style.display = 'none';
-            } else {
-                numberGroup.style.display = 'block';
-                bonusGroup.style.display = 'block';
-                multiplierGroup.style.display = 'block';
+            // Inicializar event listeners
+            initializeEventListeners() {
+                // Event listeners para los formularios
+                document.getElementById('result-type').addEventListener('change', this.toggleResultFields.bind(this));
+                
+                // Event listeners para los botones de navegación
+                document.querySelectorAll('.nav-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const sectionId = item.getAttribute('onclick').match(/'([^']+)'/)[1];
+                        this.showSection(sectionId);
+                    });
+                });
             }
-        }
 
-        function addRound() {
-            const type = document.getElementById('result-type').value;
-            const startPos = parseInt(document.getElementById('start-position').value);
-            const direction = document.getElementById('spin-direction').value;
-            
-            if (!startPos || startPos < 1 || startPos > 39) {
-                analyzer.showAlert('danger', 'Debes especificar una posición inicial válida (1-39)');
-                return;
+            // Mostrar notificación
+            showNotification(type, message) {
+                if (!this.settings.notifications) return;
+                
+                const notification = document.createElement('div');
+                notification.className = `alert alert-${type}`;
+                notification.innerHTML = `
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'}"></i>
+                    <span>${message}</span>
+                `;
+                
+                // Posicionamiento y animación
+                notification.style.position = 'fixed';
+                notification.style.bottom = '20px';
+                notification.style.right = '20px';
+                notification.style.zIndex = '1000';
+                notification.style.animation = 'slideInRight 0.3s ease-out';
+                
+                document.body.appendChild(notification);
+                
+                // Auto-eliminación después de 3 segundos
+                setTimeout(() => {
+                    notification.style.animation = 'slideOutRight 0.3s ease-out';
+                    setTimeout(() => {
+                        if (notification.parentNode) {
+                            notification.parentNode.removeChild(notification);
+                        }
+                    }, 300);
+                }, 3000);
             }
-            
-            if (type === 'leaf') {
-                analyzer.addRound(null, true, false, 1.0, startPos, direction);
-            } else {
-                const number = parseInt(document.getElementById('number-input').value);
+
+            // Mostrar alerta
+            showAlert(type, message) {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${type}`;
+                alertDiv.innerHTML = `
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'}"></i>
+                    <span>${message}</span>
+                `;
+                
+                // Insertar después del header
+                const header = document.querySelector('.header');
+                header.parentNode.insertBefore(alertDiv, header.nextSibling);
+                
+                // Auto-eliminación después de 5 segundos
+                setTimeout(() => {
+                    if (alertDiv.parentNode) {
+                        alertDiv.parentNode.removeChild(alertDiv);
+                    }
+                }, 5000);
+            }
+
+            // Cambiar sección
+            showSection(sectionId) {
+                // Ocultar todas las secciones
+                document.querySelectorAll('.section').forEach(section => {
+                    section.classList.remove('active');
+                });
+                
+                // Mostrar sección seleccionada
+                document.getElementById(sectionId).classList.add('active');
+                
+                // Actualizar navegación
+                document.querySelectorAll('.nav-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                
+                document.querySelector(`[onclick="showSection('${sectionId}')"]`).classList.add('active');
+                
+                this.currentSection = sectionId;
+                
+                // Actualizar visualizaciones específicas de la sección
+                if (sectionId === 'visualization') {
+                    this.showChart('frequency');
+                } else if (sectionId === 'patterns') {
+                    this.updatePatterns();
+                }
+            }
+
+            // Alternar campos según tipo de resultado
+            toggleResultFields() {
+                const resultType = document.getElementById('result-type').value;
+                const numberGroup = document.getElementById('number-group');
+                
+                if (resultType === 'number') {
+                    numberGroup.style.display = 'flex';
+                } else {
+                    numberGroup.style.display = 'none';
+                }
+            }
+
+            // Agregar nuevo giro
+            addRound() {
+                // Obtener valores del formulario
+                const resultType = document.getElementById('result-type').value;
+                const numberInput = document.getElementById('number-input').value;
+                const startPosition = parseInt(document.getElementById('start-position').value);
+                const direction = document.getElementById('spin-direction').value;
                 const bonus = document.getElementById('bonus-input').value === 'true';
-                const multiplier = parseFloat(document.getElementById('multiplier-input').value) || 1.0;
+                const multiplier = parseFloat(document.getElementById('multiplier-input').value);
                 
-                analyzer.addRound(number, false, bonus, multiplier, startPos, direction);
+                // Validar datos
+                if (!startPosition || startPosition < 1 || startPosition > 39) {
+                    this.showAlert('danger', 'Posición inicial inválida');
+                    return;
+                }
+                
+                if (resultType === 'number' && (!numberInput || numberInput < 1 || numberInput > 20)) {
+                    this.showAlert('danger', 'Número inválido');
+                    return;
+                }
+                
+                // Calcular posición final y distancia
+                const isLeaf = resultType === 'leaf';
+                const result = isLeaf ? null : parseInt(numberInput);
+                const finalPosition = this.calculateFinalPosition(startPosition, direction, result, isLeaf);
+                const distance = this.calculateDistance(startPosition, finalPosition, direction);
+                
+                // Crear objeto de giro
+                const round = {
+                    resultado: resultType,
+                    numero: result,
+                    posicionInicial: startPosition,
+                    direccion: direction,
+                    distancia: distance,
+                    bonus: bonus,
+                    multiplicador: multiplier,
+                    fecha: new Date().toISOString()
+                };
+                
+                // Agregar al historial
+                this.historial.push(round);
+                
+                // Guardar datos
+                if (this.saveData()) {
+                    // Actualizar visualizaciones
+                    this.updateAllDisplays();
+                    
+                    // Mostrar notificación
+                    this.showNotification('success', 'Giro agregado correctamente');
+                    
+                    // Limpiar formulario
+                    this.clearForm();
+                    
+                    // Mostrar resultado
+                    this.showAddResult(round);
+                }
             }
-        }
 
-        function quickAddMode() {
-            analyzer.showAlert('info', 'Modo rápido activado. Usa atajos de teclado: 1-20 para números, L para leaf, D/I para dirección');
-            // Se podría implementar atajos de teclado aquí
-        }
+            // Limpiar formulario
+            clearForm() {
+                document.getElementById('number-input').value = '';
+                document.getElementById('start-position').value = '';
+                document.getElementById('bonus-input').value = 'false';
+                document.getElementById('multiplier-input').value = '1.0';
+            }
 
-        function runSimulation() {
-            const rounds = parseInt(document.getElementById('sim-rounds').value) || 10;
-            const count = parseInt(document.getElementById('sim-count').value) || 1000;
-            const startPos = parseInt(document.getElementById('sim-start-pos').value) || 1;
-            const direction = document.getElementById('sim-direction').value;
-            
-            document.getElementById('sim-loading').style.display = 'block';
-            document.getElementById('simulation-results').style.display = 'none';
-            
-            // Simular tiempo de procesamiento para realismo
-            setTimeout(() => {
-                const results = analyzer.simulate(count, rounds, startPos, direction);
+            // Mostrar resultado agregado
+            showAddResult(round) {
+                const resultDiv = document.getElementById('add-result');
+                const resultText = round.resultado === 'number' 
+                    ? `Número ${round.numero}` 
+                    : 'Leaf';
+                const directionText = round.direccion === 'right' 
+                    ? 'Derecha' 
+                    : 'Izquierda';
                 
-                if (results) {
-                    const output = document.getElementById('sim-output');
-                    output.innerHTML = `
-                        <div class="metrics-grid">
-                            <div class="metric-card">
-                                <div class="metric-title">Leaf Esperados</div>
-                                <div class="metric-value">${results.conteo_leaf.toFixed(1)}</div>
+                resultDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i>
+                        <span>
+                            Giro agregado: ${resultText} | 
+                            Posición inicial: ${round.posicionInicial} | 
+                            Dirección: ${directionText} | 
+                            Distancia: ${round.distancia} | 
+                            Bonus: ${round.bonus ? 'Sí' : 'No'}
+                        </span>
+                    </div>
+                `;
+                
+                // Auto-eliminar después de 5 segundos
+                setTimeout(() => {
+                    resultDiv.innerHTML = '';
+                }, 5000);
+            }
+
+            // Modo rápido de entrada
+            quickAddMode() {
+                // Implementación simplificada para entrada rápida
+                this.showAlert('warning', 'Modo rápido: Ingresa solo posición inicial y dirección');
+                
+                // Ocultar campos no esenciales
+                document.getElementById('number-group').style.display = 'none';
+                document.getElementById('bonus-group').style.display = 'none';
+                document.getElementById('multiplier-group').style.display = 'none';
+                
+                // Establecer valores por defecto
+                document.getElementById('result-type').value = 'number';
+                document.getElementById('number-input').value = Math.floor(Math.random() * 20) + 1;
+                document.getElementById('bonus-input').value = 'false';
+                document.getElementById('multiplier-input').value = '1.0';
+            }
+
+            // Ejecutar simulación Monte Carlo
+            runSimulation() {
+                const simRounds = parseInt(document.getElementById('sim-rounds').value);
+                const simCount = parseInt(document.getElementById('sim-count').value);
+                const startPos = parseInt(document.getElementById('sim-start-pos').value);
+                const direction = document.getElementById('sim-direction').value;
+                
+                // Validar parámetros
+                if (simRounds < 1 || simRounds > 100) {
+                    this.showAlert('danger', 'Giros de simulación deben estar entre 1 y 100');
+                    return;
+                }
+                
+                if (simCount < 100 || simCount > 10000) {
+                    this.showAlert('danger', 'Cantidad de simulaciones debe estar entre 100 y 10000');
+                    return;
+                }
+                
+                // Mostrar loading
+                document.getElementById('sim-loading').style.display = 'block';
+                document.getElementById('simulation-results').style.display = 'none';
+                
+                // Ejecutar simulación en background
+                setTimeout(() => {
+                    const results = this.performMonteCarloSimulation(simRounds, simCount, startPos, direction);
+                    this.displaySimulationResults(results);
+                    
+                    // Ocultar loading y mostrar resultados
+                    document.getElementById('sim-loading').style.display = 'none';
+                    document.getElementById('simulation-results').style.display = 'block';
+                }, 100);
+            }
+
+            // Realizar simulación Monte Carlo
+            performMonteCarloSimulation(rounds, count, startPos, direction) {
+                const results = {
+                    totalBonus: 0,
+                    totalLeaf: 0,
+                    avgDistance: 0,
+                    bestDirection: null,
+                    worstDirection: null,
+                    bestPosition: null,
+                    worstPosition: null,
+                    directionStats: { right: { bonus: 0, leaf: 0, distance: 0 }, left: { bonus: 0, leaf: 0, distance: 0 } },
+                    positionStats: {}
+                };
+                
+                // Inicializar estadísticas de posición
+                for (let i = 1; i <= 39; i++) {
+                    results.positionStats[i] = { bonus: 0, leaf: 0, distance: 0, count: 0 };
+                }
+                
+                // Ejecutar simulaciones
+                for (let sim = 0; sim < count; sim++) {
+                    let simBonus = 0;
+                    let simLeaf = 0;
+                    let simDistance = 0;
+                    let currentPos = startPos;
+                    
+                    for (let round = 0; round < rounds; round++) {
+                        // Determinar dirección
+                        let simDirection = direction;
+                        if (direction === 'both') {
+                            simDirection = Math.random() < 0.5 ? 'right' : 'left';
+                        }
+                        
+                        // Determinar resultado (simplificado)
+                        const isLeaf = Math.random() < 0.3; // 30% probabilidad de leaf
+                        const result = isLeaf ? null : Math.floor(Math.random() * 20) + 1;
+                        
+                        // Calcular posición final y distancia
+                        const finalPos = this.calculateFinalPosition(currentPos, simDirection, result, isLeaf);
+                        const distance = this.calculateDistance(currentPos, finalPos, simDirection);
+                        
+                        // Determinar bonus (simplificado)
+                        const bonus = Math.random() < 0.15; // 15% probabilidad de bonus
+                        
+                        // Actualizar estadísticas
+                        if (bonus) simBonus++;
+                        if (isLeaf) simLeaf++;
+                        simDistance += distance;
+                        
+                        // Actualizar estadísticas por dirección
+                        results.directionStats[simDirection].bonus += bonus ? 1 : 0;
+                        results.directionStats[simDirection].leaf += isLeaf ? 1 : 0;
+                        results.directionStats[simDirection].distance += distance;
+                        
+                        // Actualizar estadísticas por posición
+                        results.positionStats[currentPos].bonus += bonus ? 1 : 0;
+                        results.positionStats[currentPos].leaf += isLeaf ? 1 : 0;
+                        results.positionStats[currentPos].distance += distance;
+                        results.positionStats[currentPos].count++;
+                        
+                        // Actualizar posición actual para siguiente ronda
+                        currentPos = finalPos;
+                    }
+                    
+                    results.totalBonus += simBonus;
+                    results.totalLeaf += simLeaf;
+                    results.avgDistance += simDistance;
+                }
+                
+                // Calcular promedios
+                results.totalBonus = Math.round((results.totalBonus / count) * 100) / 100;
+                results.totalLeaf = Math.round((results.totalLeaf / count) * 100) / 100;
+                results.avgDistance = Math.round((results.avgDistance / count) * 100) / 100;
+                
+                // Calcular mejor y peor dirección
+                const rightBonusRate = results.directionStats.right.bonus / count;
+                const leftBonusRate = results.directionStats.left.bonus / count;
+                
+                if (rightBonusRate > leftBonusRate) {
+                    results.bestDirection = 'right';
+                    results.worstDirection = 'left';
+                } else {
+                    results.bestDirection = 'left';
+                    results.worstDirection = 'right';
+                }
+                
+                // Calcular mejor y peor posición
+                let bestPos = null;
+                let bestPosRate = -1;
+                let worstPos = null;
+                let worstPosRate = 2;
+                
+                for (const [pos, stats] of Object.entries(results.positionStats)) {
+                    if (stats.count > 0) {
+                        const bonusRate = stats.bonus / stats.count;
+                        if (bonusRate > bestPosRate) {
+                            bestPosRate = bonusRate;
+                            bestPos = pos;
+                        }
+                        if (bonusRate < worstPosRate) {
+                            worstPosRate = bonusRate;
+                            worstPos = pos;
+                        }
+                    }
+                }
+                
+                results.bestPosition = bestPos;
+                results.worstPosition = worstPos;
+                
+                return results;
+            }
+
+            // Mostrar resultados de simulación
+            displaySimulationResults(results) {
+                const output = document.getElementById('sim-output');
+                
+                output.innerHTML = `
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Bonus Promedio</span>
+                                <div class="metric-icon">
+                                    <i class="fas fa-gift"></i>
+                                </div>
                             </div>
-                            <div class="metric-card success">
-                                <div class="metric-title">Bonus Esperados</div>
-                                <div class="metric-value">${results.total_bonus.toFixed(1)}</div>
-                            </div>
-                            <div class="metric-card warning">
-                                <div class="metric-title">Prob. de Bonus</div>
-                                <div class="metric-value">${(results.prob_bonus_en_X_rondas * 100).toFixed(1)}%</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-title">Distancia Promedio</div>
-                                <div class="metric-value">${results.distancia_promedio_simulada.toFixed(1)}</div>
+                            <div class="metric-value">${results.totalBonus}</div>
+                            <div class="metric-change">
+                                <span>Por simulación</span>
                             </div>
                         </div>
                         
-                        <h4>Números Más Probables:</h4>
-                        <div class="numbers-grid">
-                            ${Object.entries(results.conteo_numeros)
-                                .sort(([,a], [,b]) => b - a)
-                                .slice(0, 8)
-                                .map(([num, freq]) => `
-                                    <div class="number-card">
-                                        <div class="number-value">${num}</div>
-                                        <div class="number-stats">
-                                            <div>${freq.toFixed(1)} veces</div>
-                                        </div>
-                                    </div>
-                                `).join('')}
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Leaf Promedio</span>
+                                <div class="metric-icon">
+                                    <i class="fas fa-leaf"></i>
+                                </div>
+                            </div>
+                            <div class="metric-value">${results.totalLeaf}</div>
+                            <div class="metric-change">
+                                <span>Por simulación</span>
+                            </div>
                         </div>
+                        
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Distancia Promedio</span>
+                                <div class="metric-icon">
+                                    <i class="fas fa-route"></i>
+                                </div>
+                            </div>
+                            <div class="metric-value">${results.avgDistance}</div>
+                            <div class="metric-change">
+                                <span>Por giro</span>
+                            </div>
+                        </div>
+                        
+                        <div class="metric-card success">
+                            <div class="metric-header">
+                                <span class="metric-title">Mejor Dirección</span>
+                                <div class="metric-icon">
+                                    <i class="fas fa-arrow-${results.bestDirection === 'right' ? 'right' : 'left'}"></i>
+                                </div>
+                            </div>
+                            <div class="metric-value">${results.bestDirection === 'right' ? '→' : '←'}</div>
+                            <div class="metric-change">
+                                <span>${results.bestDirection === 'right' ? 'Derecha' : 'Izquierda'}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="range-analysis">
+                        <div class="range-title">
+                            <i class="fas fa-lightbulb"></i>
+                            Recomendaciones de Simulación
+                        </div>
+                        <div class="range-item">
+                            <span>Mejor posición inicial</span>
+                            <span>${results.bestPosition || 'N/A'}</span>
+                        </div>
+                        <div class="range-item">
+                            <span>Evitar posición inicial</span>
+                            <span>${results.worstPosition || 'N/A'}</span>
+                        </div>
+                        <div class="range-item">
+                            <span>Tasa de bonus esperada</span>
+                            <span>${Math.round(results.totalBonus * 100 / parseInt(document.getElementById('sim-rounds').value))}%</span>
+                        </div>
+                    </div>
+                `;
+            }
 
-                        <h4 style="margin-top: 2rem;">Predicciones por Dirección:</h4>
-                        <div class="pattern-grid">
-                            <div class="pattern-card">
-                                <div class="pattern-title">Derecha</div>
-                                <div>Bonus: ${results.predicciones_por_direccion.derecha.bonus.toFixed(1)}</div>
-                                <div>Leaf: ${results.predicciones_por_direccion.derecha.leaf.toFixed(1)}</div>
-                            </div>
-                            <div class="pattern-card">
-                                <div class="pattern-title">Izquierda</div>
-                                <div>Bonus: ${results.predicciones_por_direccion.izquierda.bonus.toFixed(1)}</div>
-                                <div>Leaf: ${results.predicciones_por_direccion.izquierda.leaf.toFixed(1)}</div>
-                            </div>
-                        </div>
-                    `;
+            // Exportar resultados de simulación
+            exportSimulation() {
+                const results = document.getElementById('sim-output').innerHTML;
+                
+                if (!results) {
+                    this.showAlert('warning', 'Ejecuta una simulación primero');
+                    return;
                 }
                 
-                document.getElementById('sim-loading').style.display = 'none';
-                document.getElementById('simulation-results').style.display = 'block';
-            }, 2500);
-        }
-
-        function showChart(type) {
-            const canvas = document.getElementById('mainChart');
-            const ctx = canvas.getContext('2d');
-            
-            if (analyzer.chart) {
-                analyzer.chart.destroy();
-            }
-            
-            const stats = analyzer.calculateStats();
-            
-            if (type === 'frequency') {
-                const data = {
-                    labels: Array.from({length: 20}, (_, i) => (i + 1).toString()),
-                    datasets: [{
-                        label: 'Frecuencia',
-                        data: Array.from({length: 20}, (_, i) => stats.conteo_numeros[i + 1]),
-                        backgroundColor: 'rgba(59, 130, 246, 0.6)',
-                        borderColor: 'rgba(59, 130, 246, 1)',
-                        borderWidth: 2
-                    }]
-                };
+                // Crear contenido para exportar
+                const content = `
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Resultados de Simulación - Lightning Storm</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; margin: 20px; background: #0f172a; color: #f8fafc; }
+                            .metric-card { background: rgba(30, 41, 59, 0.6); border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
+                            .metric-value { font-size: 2rem; font-weight: bold; }
+                            .range-item { background: rgba(30, 41, 59, 0.4); padding: 1rem; margin-bottom: 0.5rem; border-radius: 8px; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Resultados de Simulación Monte Carlo</h1>
+                        <p>Generado el: ${new Date().toLocaleString()}</p>
+                        ${results}
+                    </body>
+                    </html>
+                `;
                 
-                analyzer.chart = new Chart(ctx, {
-                    type: 'bar',
-                    data: data,
-                    options: {
-                        responsive: true,
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                ticks: { color: '#cbd5e1' },
-                                grid: { color: 'rgba(203, 213, 225, 0.1)' }
+                // Descargar archivo
+                const blob = new Blob([content], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `simulacion_${new Date().toISOString().slice(0, 10)}.html`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                this.showNotification('success', 'Resultados exportados correctamente');
+            }
+
+            // Mostrar gráfico
+            showChart(chartType) {
+                const ctx = document.getElementById('mainChart').getContext('2d');
+                
+                if (this.chart) {
+                    this.chart.destroy();
+                }
+                
+                let chartData;
+                let chartOptions = {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#cbd5e1'
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                color: '#cbd5e1'
                             },
-                            x: {
-                                ticks: { color: '#cbd5e1' },
-                                grid: { color: 'rgba(203, 213, 225, 0.1)' }
+                            grid: {
+                                color: 'rgba(148, 163, 184, 0.1)'
                             }
                         },
-                        plugins: {
-                            legend: { labels: { color: '#cbd5e1' } }
+                        x: {
+                            ticks: {
+                                color: '#cbd5e1'
+                            },
+                            grid: {
+                                color: 'rgba(148, 163, 184, 0.1)'
+                            }
                         }
                     }
-                });
-            } else if (type === 'direction') {
-                const data = {
-                    labels: ['Giros a la Derecha', 'Giros a la Izquierda'],
-                    datasets: [{
-                        label: 'Cantidad de Giros',
-                        data: [stats.giros_derecha, stats.giros_izquierda],
-                        backgroundColor: ['rgba(245, 158, 11, 0.6)', 'rgba(16, 185, 129, 0.6)'],
-                        borderColor: ['rgba(245, 158, 11, 1)', 'rgba(16, 185, 129, 1)'],
-                        borderWidth: 2
-                    }]
                 };
                 
-                analyzer.chart = new Chart(ctx, {
-                    type: 'doughnut',
-                    data: data,
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            legend: { labels: { color: '#cbd5e1' } }
+                switch (chartType) {
+                    case 'frequency':
+                        // Gráfico de frecuencia de números
+                        const numberFreq = new Array(20).fill(0);
+                        this.historial.forEach(round => {
+                            if (round.resultado === 'number' && round.numero) {
+                                numberFreq[round.numero - 1]++;
+                            }
+                        });
+                        
+                        chartData = {
+                            labels: Array.from({length: 20}, (_, i) => i + 1),
+                            datasets: [{
+                                label: 'Frecuencia',
+                                data: numberFreq,
+                                backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                                borderColor: 'rgba(59, 130, 246, 1)',
+                                borderWidth: 1
+                            }]
+                        };
+                        
+                        this.chart = new Chart(ctx, {
+                            type: 'bar',
+                            data: chartData,
+                            options: chartOptions
+                        });
+                        break;
+                        
+                    case 'bonus':
+                        // Gráfico de bonus por número
+                        const bonusRates = new Array(20).fill(0);
+                        const appearances = new Array(20).fill(0);
+                        
+                        this.historial.forEach(round => {
+                            if (round.resultado === 'number' && round.numero) {
+                                appearances[round.numero - 1]++;
+                                if (round.bonus) {
+                                    bonusRates[round.numero - 1]++;
+                                }
+                            }
+                        });
+                        
+                        // Calcular tasas
+                        for (let i = 0; i < 20; i++) {
+                            if (appearances[i] > 0) {
+                                bonusRates[i] = Math.round((bonusRates[i] / appearances[i]) * 100);
+                            } else {
+                                bonusRates[i] = 0;
+                            }
                         }
-                    }
-                });
-            }
-        }
-
-        function clearHistory() {
-            if (confirm('¿Estás seguro de que quieres limpiar todo el historial? Esta acción no se puede deshacer.')) {
-                analyzer.historial = [];
-                analyzer.saveData();
-                analyzer.updateAllDisplays();
-                analyzer.showAlert('success', 'Historial limpiado exitosamente');
-            }
-        }
-
-        function refreshHistory() {
-            analyzer.updateAllDisplays();
-            analyzer.showAlert('success', 'Datos actualizados');
-        }
-
-        function exportData() {
-            const data = {
-                historial: analyzer.historial,
-                fecha_exportacion: new Date().toISOString(),
-                version: '2.0'
-            };
-            
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `lightning_storm_export_${new Date().toISOString().split('T')[0]}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-
-        function exportReport() {
-            const stats = analyzer.calculateStats();
-            const patterns = analyzer.analyzeSpinPatterns();
-            const recommendations = analyzer.suggestBestNumbers(10);
-            
-            let report = `REPORTE DE ANÁLISIS LIGHTNING STORM\n`;
-            report += `Generado: ${new Date().toLocaleString()}\n`;
-            report += `=====================================\n\n`;
-            report += `RESUMEN:\n`;
-            report += `Total de Giros: ${stats.total_rondas}\n`;
-            report += `Tasa de Bonus: ${stats.total_rondas > 0 ? ((stats.total_bonus / stats.total_rondas) * 100).toFixed(1) : 0}%\n`;
-            report += `Racha Actual: ${stats.racha_actual_sin_bonus}\n`;
-            report += `Racha Máxima: ${stats.racha_maxima_sin_bonus}\n\n`;
-            
-            report += `ANÁLISIS DE PATRONES:\n`;
-            report += `Giros a la Derecha: ${patterns.direcciones.derecha.total} (${patterns.direcciones.derecha.tasa_bonus.toFixed(1)}% bonus)\n`;
-            report += `Giros a la Izquierda: ${patterns.direcciones.izquierda.total} (${patterns.direcciones.izquierda.tasa_bonus.toFixed(1)}% bonus)\n`;
-            report += `Patrón de Alternancia: ${patterns.alternancia.patron} (${patterns.alternancia.precision}%)\n\n`;
-            
-            report += `RECOMENDACIONES PRINCIPALES:\n`;
-            recommendations.forEach((rec, i) => {
-                report += `${i + 1}. Número ${rec.numero} - Valor: ${rec.valor.toFixed(2)} - Bonus: ${(rec.probBonus * 100).toFixed(1)}%\n`;
-            });
-            
-            const blob = new Blob([report], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `lightning_storm_reporte_${new Date().toISOString().split('T')[0]}.txt`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-
-        function importData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const data = JSON.parse(e.target.result);
-                    if (data.historial) {
-                        analyzer.historial = data.historial;
-                        analyzer.saveData();
-                        analyzer.updateAllDisplays();
-                        analyzer.showAlert('success', `Importados ${data.historial.length} giros exitosamente`);
-                    }
-                } catch (error) {
-                    analyzer.showAlert('danger', 'Error importando archivo: Formato inválido');
+                        
+                        chartData = {
+                            labels: Array.from({length: 20}, (_, i) => i + 1),
+                            datasets: [{
+                                label: 'Tasa de Bonus (%)',
+                                data: bonusRates,
+                                backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                                borderColor: 'rgba(16, 185, 129, 1)',
+                                borderWidth: 1
+                            }]
+                        };
+                        
+                        this.chart = new Chart(ctx, {
+                            type: 'bar',
+                            data: chartData,
+                            options: chartOptions
+                        });
+                        break;
+                        
+                    case 'direction':
+                        // Gráfico de análisis direccional
+                        const rightCount = this.historial.filter(r => r.direccion === 'right').length;
+                        const leftCount = this.historial.filter(r => r.direccion === 'left').length;
+                        
+                        chartData = {
+                            labels: ['Derecha', 'Izquierda'],
+                            datasets: [{
+                                label: 'Cantidad de Giros',
+                                data: [rightCount, leftCount],
+                                backgroundColor: [
+                                    'rgba(59, 130, 246, 0.7)',
+                                    'rgba(239, 68, 68, 0.7)'
+                                ],
+                                borderColor: [
+                                    'rgba(59, 130, 246, 1)',
+                                    'rgba(239, 68, 68, 1)'
+                                ],
+                                borderWidth: 1
+                            }]
+                        };
+                        
+                        this.chart = new Chart(ctx, {
+                            type: 'doughnut',
+                            data: chartData,
+                            options: chartOptions
+                        });
+                        break;
+                        
+                    case 'timeline':
+                        // Gráfico de línea de tiempo
+                        const timelineData = [];
+                        const bonusTimeline = [];
+                        
+                        // Agrupar por día
+                        const dailyData = {};
+                        this.historial.forEach(round => {
+                            const date = new Date(round.fecha).toLocaleDateString();
+                            if (!dailyData[date]) {
+                                dailyData[date] = { total: 0, bonus: 0 };
+                            }
+                            dailyData[date].total++;
+                            if (round.bonus) {
+                                dailyData[date].bonus++;
+                            }
+                        });
+                        
+                        // Preparar datos para gráfico
+                        Object.keys(dailyData).sort().forEach(date => {
+                            timelineData.push(date);
+                            const rate = Math.round((dailyData[date].bonus / dailyData[date].total) * 100);
+                            bonusTimeline.push(rate);
+                        });
+                        
+                        chartData = {
+                            labels: timelineData,
+                            datasets: [{
+                                label: 'Tasa de Bonus (%)',
+                                data: bonusTimeline,
+                                backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                                borderColor: 'rgba(245, 158, 11, 1)',
+                                borderWidth: 2,
+                                tension: 0.4
+                            }]
+                        };
+                        
+                        this.chart = new Chart(ctx, {
+                            type: 'line',
+                            data: chartData,
+                            options: chartOptions
+                        });
+                        break;
                 }
-            };
-            reader.readAsText(file);
+            }
+
+            // Actualizar historial
+            refreshHistory() {
+                this.updateHistory();
+                this.showNotification('success', 'Historial actualizado');
+            }
+
+            // Limpiar historial
+            clearHistory() {
+                if (confirm('¿Estás seguro de que quieres eliminar todo el historial? Esta acción no se puede deshacer.')) {
+                    this.historial = [];
+                    this.saveData();
+                    this.updateAllDisplays();
+                    this.showNotification('success', 'Historial eliminado correctamente');
+                }
+            }
+
+            // Exportar datos
+            exportData() {
+                const data = {
+                    historial: this.historial,
+                    fecha_exportacion: new Date().toISOString(),
+                    version: '2.0'
+                };
+                
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `lightning_storm_data_${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                this.showNotification('success', 'Datos exportados correctamente');
+            }
+
+            // Generar reporte
+            exportReport() {
+                const totalRounds = this.historial.length;
+                const bonusCount = this.historial.filter(r => r.bonus === true).length;
+                const leafCount = this.historial.filter(r => r.resultado === 'leaf').length;
+                const bonusRate = totalRounds > 0 ? Math.round((bonusCount / totalRounds) * 100) : 0;
+                const leafRate = totalRounds > 0 ? Math.round((leafCount / totalRounds) * 100) : 0;
+                
+                const report = `
+# Reporte de Lightning Storm Analytics
+
+**Fecha de generación:** ${new Date().toLocaleString()}
+
+## Resumen General
+- **Total de giros:** ${totalRounds}
+- **Giros con bonus:** ${bonusCount} (${bonusRate}%)
+- **Giros Leaf:** ${leafCount} (${leafRate}%)
+
+## Análisis por Dirección
+### Giros a la Derecha
+- **Total:** ${this.historial.filter(r => r.direccion === 'right').length}
+- **Tasa de bonus:** ${document.getElementById('right-bonus-rate').textContent}
+- **Distancia promedio:** ${document.getElementById('right-avg-distance').textContent}
+
+### Giros a la Izquierda
+- **Total:** ${this.historial.filter(r => r.direccion === 'left').length}
+- **Tasa de bonus:** ${document.getElementById('left-bonus-rate').textContent}
+- **Distancia promedio:** ${document.getElementById('left-avg-distance').textContent}
+
+## Recomendaciones
+ ${document.getElementById('recommendations-list').innerText}
+
+---
+*Generado por Lightning Storm Analytics v2.0*
+                `;
+                
+                const blob = new Blob([report], { type: 'text/markdown' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `reporte_${new Date().toISOString().slice(0, 10)}.md`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                this.showNotification('success', 'Reporte generado correctamente');
+            }
+
+            // Importar datos
+            importData(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        
+                        if (data.historial && Array.isArray(data.historial)) {
+                            if (confirm('¿Importar ' + data.historial.length + ' giros? Esto reemplazará tus datos actuales.')) {
+                                this.historial = data.historial;
+                                this.saveData();
+                                this.updateAllDisplays();
+                                this.showNotification('success', 'Datos importados correctamente');
+                            }
+                        } else {
+                            this.showAlert('danger', 'Formato de archivo inválido');
+                        }
+                    } catch (error) {
+                        this.showAlert('danger', 'Error al procesar el archivo');
+                    }
+                };
+                reader.readAsText(file);
+                
+                // Limpiar input
+                event.target.value = '';
+            }
+
+            // Depurar datos
+            debugData() {
+                const issues = this.verifyData();
+                
+                if (issues.length === 0) {
+                    this.showNotification('success', 'Todos los datos son válidos');
+                } else {
+                    const issuesText = issues.join('\n');
+                    alert('Problemas encontrados:\n\n' + issuesText);
+                }
+            }
+
+            // Probar almacenamiento local
+            testSave() {
+                const testData = { test: true, timestamp: new Date().toISOString() };
+                
+                try {
+                    localStorage.setItem('lightning_storm_test', JSON.stringify(testData));
+                    const retrieved = JSON.parse(localStorage.getItem('lightning_storm_test'));
+                    
+                    if (retrieved.test === true) {
+                        this.showNotification('success', 'LocalStorage funciona correctamente');
+                    } else {
+                        this.showAlert('danger', 'Error en la recuperación de datos');
+                    }
+                    
+                    localStorage.removeItem('lightning_storm_test');
+                } catch (e) {
+                    this.showAlert('danger', 'LocalStorage no está disponible');
+                }
+            }
+        }
+
+        // Inicializar aplicación
+        let analyzer;
+        document.addEventListener('DOMContentLoaded', () => {
+            analyzer = new LightningStormAnalyzer();
+        });
+
+        // Funciones globales para eventos
+        function showSection(sectionId) {
+            analyzer.showSection(sectionId);
+        }
+
+        function toggleResultFields() {
+            analyzer.toggleResultFields();
+        }
+
+        function addRound() {
+            analyzer.addRound();
+        }
+
+        function quickAddMode() {
+            analyzer.quickAddMode();
+        }
+
+        function runSimulation() {
+            analyzer.runSimulation();
         }
 
         function exportSimulation() {
-            analyzer.showAlert('info', 'Función de exportación de simulación disponible próximamente');
+            analyzer.exportSimulation();
+        }
+
+        function showChart(chartType) {
+            analyzer.showChart(chartType);
+        }
+
+        function refreshHistory() {
+            analyzer.refreshHistory();
+        }
+
+        function clearHistory() {
+            analyzer.clearHistory();
+        }
+
+        function exportData() {
+            analyzer.exportData();
+        }
+
+        function exportReport() {
+            analyzer.exportReport();
+        }
+
+        function importData(event) {
+            analyzer.importData(event);
         }
 
         function debugData() {
-            analyzer.checkDataStatus();
-            console.log('Historial actual:', analyzer.historial);
-            console.log('LocalStorage disponible:', typeof(Storage) !== "undefined");
-            
-            // Mostrar información en pantalla también
-            const debugInfo = `
-                Datos en memoria: ${analyzer.historial.length} giros
-                LocalStorage: ${typeof(Storage) !== "undefined" ? 'Disponible' : 'No disponible'}
-                Último guardado: ${localStorage.getItem('lightning_storm_data') ? 'Existe' : 'No existe'}
-            `;
-            analyzer.showAlert('info', debugInfo);
+            analyzer.debugData();
         }
 
         function testSave() {
-            const testData = { test: 'prueba', timestamp: new Date().toISOString() };
-            try {
-                localStorage.setItem('test_save', JSON.stringify(testData));
-                const retrieved = JSON.parse(localStorage.getItem('test_save'));
-                localStorage.removeItem('test_save');
-                analyzer.showAlert('success', 'LocalStorage funcionando correctamente');
-                return true;
-            } catch (e) {
-                analyzer.showAlert('danger', 'Error en LocalStorage: ' + e.message);
-                return false;
-            }
+            analyzer.testSave();
         }
-
-        // Inicialización
-        document.addEventListener('DOMContentLoaded', function() {
-            toggleResultFields();
-            analyzer.updateAllDisplays();
-            
-            // Animación de carga del spinner
-            const style = document.createElement('style');
-            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
-            document.head.appendChild(style);
-        });
     </script>
 </body>
 </html>
