@@ -1116,6 +1116,26 @@
                                 <input type="file" id="import-file" class="form-input" accept=".json" onchange="importData(event)">
                             </div>
                         </div>
+
+                        <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(248, 113, 113, 0.05)); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 12px; margin-top: 2rem;">
+                            <h3>Herramientas de Diagnóstico</h3>
+                            <p>Usar solo si hay problemas con el guardado de datos</p>
+                            
+                            <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem;">
+                                <button class="btn btn-secondary" onclick="debugData()">
+                                    <i class="fas fa-bug"></i>
+                                    Verificar Datos
+                                </button>
+                                <button class="btn btn-secondary" onclick="testSave()">
+                                    <i class="fas fa-vial"></i>
+                                    Test LocalStorage
+                                </button>
+                                <button class="btn btn-danger" onclick="localStorage.clear(); location.reload();">
+                                    <i class="fas fa-broom"></i>
+                                    Limpiar Todo
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1190,16 +1210,22 @@
 
             // Gestión de Datos
             loadData() {
-                const data = localStorage.getItem('lightning_storm_data');
-                if (data) {
-                    try {
+                try {
+                    const data = localStorage.getItem('lightning_storm_data');
+                    if (data) {
                         const parsed = JSON.parse(data);
                         this.historial = parsed.historial || [];
-                        this.showAlert('success', `Datos cargados: ${this.historial.length} giros`);
-                    } catch (e) {
-                        console.error('Error cargando datos:', e);
+                        if (this.historial.length > 0) {
+                            console.log(`Datos cargados: ${this.historial.length} giros`);
+                        }
+                    } else {
                         this.historial = [];
+                        console.log('No hay datos guardados, iniciando historial vacío');
                     }
+                } catch (e) {
+                    console.error('Error cargando datos:', e);
+                    this.historial = [];
+                    this.showAlert('danger', 'Error al cargar datos guardados');
                 }
             }
 
@@ -1207,13 +1233,38 @@
                 try {
                     const data = {
                         historial: this.historial,
-                        fecha_guardado: new Date().toISOString()
+                        fecha_guardado: new Date().toISOString(),
+                        version: '2.0'
                     };
                     localStorage.setItem('lightning_storm_data', JSON.stringify(data));
+                    console.log(`Datos guardados: ${this.historial.length} giros`);
+                    return true;
                 } catch (e) {
                     console.error('Error guardando datos:', e);
-                    this.showAlert('danger', 'Error al guardar datos');
+                    this.showAlert('danger', 'Error al guardar datos - Posible falta de espacio');
+                    return false;
                 }
+            }
+
+            // Verificar estado de datos
+            checkDataStatus() {
+                const stored = localStorage.getItem('lightning_storm_data');
+                if (stored) {
+                    try {
+                        const parsed = JSON.parse(stored);
+                        console.log('Estado de datos:', {
+                            en_memoria: this.historial.length,
+                            guardados: parsed.historial ? parsed.historial.length : 0,
+                            fecha_guardado: parsed.fecha_guardado
+                        });
+                        return true;
+                    } catch (e) {
+                        console.error('Datos corruptos en localStorage:', e);
+                        return false;
+                    }
+                }
+                console.log('No hay datos guardados');
+                return false;
             }
 
             // Agregar giro
@@ -1244,25 +1295,32 @@
                 };
 
                 this.historial.push(ronda);
-                this.saveData();
-                this.updateAllDisplays();
+                const saved = this.saveData();
+                
+                if (saved) {
+                    this.updateAllDisplays();
 
-                if (esLeaf) {
-                    this.showAlert('success', `Giro agregado: Leaf (1:1) - Distancia: ${distancia}`);
+                    if (esLeaf) {
+                        this.showAlert('success', `Giro agregado: Leaf (1:1) - Distancia: ${distancia}`);
+                    } else {
+                        let msg = `Giro agregado: Número ${numero} - Distancia: ${distancia}`;
+                        if (bonus) msg += ' 🎁 Con bonus';
+                        if (multiplicador > 1) msg += ` ⚡ Multiplicador ${multiplicador}x`;
+                        this.showAlert('success', msg);
+                    }
+
+                    // Limpiar formulario
+                    document.getElementById('number-input').value = '';
+                    document.getElementById('bonus-input').value = 'false';
+                    document.getElementById('multiplier-input').value = '1.0';
+                    document.getElementById('start-position').value = '';
+
+                    return true;
                 } else {
-                    let msg = `Giro agregado: Número ${numero} - Distancia: ${distancia}`;
-                    if (bonus) msg += ' 🎁 Con bonus';
-                    if (multiplicador > 1) msg += ` ⚡ Multiplicador ${multiplicador}x`;
-                    this.showAlert('success', msg);
+                    // Revertir si no se pudo guardar
+                    this.historial.pop();
+                    return false;
                 }
-
-                // Limpiar formulario
-                document.getElementById('number-input').value = '';
-                document.getElementById('bonus-input').value = 'false';
-                document.getElementById('multiplier-input').value = '1.0';
-                document.getElementById('start-position').value = '';
-
-                return true;
             }
 
             // Calcular estadísticas mejoradas
@@ -2191,6 +2249,34 @@
 
         function exportSimulation() {
             analyzer.showAlert('info', 'Función de exportación de simulación disponible próximamente');
+        }
+
+        function debugData() {
+            analyzer.checkDataStatus();
+            console.log('Historial actual:', analyzer.historial);
+            console.log('LocalStorage disponible:', typeof(Storage) !== "undefined");
+            
+            // Mostrar información en pantalla también
+            const debugInfo = `
+                Datos en memoria: ${analyzer.historial.length} giros
+                LocalStorage: ${typeof(Storage) !== "undefined" ? 'Disponible' : 'No disponible'}
+                Último guardado: ${localStorage.getItem('lightning_storm_data') ? 'Existe' : 'No existe'}
+            `;
+            analyzer.showAlert('info', debugInfo);
+        }
+
+        function testSave() {
+            const testData = { test: 'prueba', timestamp: new Date().toISOString() };
+            try {
+                localStorage.setItem('test_save', JSON.stringify(testData));
+                const retrieved = JSON.parse(localStorage.getItem('test_save'));
+                localStorage.removeItem('test_save');
+                analyzer.showAlert('success', 'LocalStorage funcionando correctamente');
+                return true;
+            } catch (e) {
+                analyzer.showAlert('danger', 'Error en LocalStorage: ' + e.message);
+                return false;
+            }
         }
 
         // Inicialización
